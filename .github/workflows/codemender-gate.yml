@@ -126,13 +126,7 @@ jobs:
 
       - name: Upload SARIF to GitHub Security Tab
         if: always()
-        run: |
-          if [ -f "findings.sarif" ]; then
-            echo "Uploading findings.sarif to GitHub Security tab..."
-          fi
-        # Using github/codeql-action/upload-sarif
-      - uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: findings.sarif
           category: codemender
@@ -148,7 +142,24 @@ jobs:
         continue-on-error: true
 
       - name: Enforce Security Gate Status Check
-        if: steps.cm-scan.outcome != 'success'
+        if: always()
         run: |
-          echo "::error title=CodeMender Security Gate Failed::One or more HIGH or CRITICAL vulnerabilities were detected. Merging is blocked until remediated."
-          exit 1
+          set -e
+          FAILURES=0
+          if [ -f "findings.sarif" ]; then
+            VULN_COUNT=$(jq '[.runs[].results[]] | length' findings.sarif 2>/dev/null || echo "0")
+            if [ "$VULN_COUNT" -gt 0 ]; then
+              echo "::error title=CodeMender Security Gate Blocked::CodeMender detected $VULN_COUNT vulnerability(ies). Pull request merge is blocked until resolved."
+              FAILURES=1
+            fi
+          fi
+          
+          if [ "${{ steps.cm-scan.outcome }}" != "success" ]; then
+            FAILURES=1
+          fi
+
+          if [ "$FAILURES" -ne 0 ]; then
+            echo "❌ CodeMender Security Gate failed."
+            exit 1
+          fi
+          echo "✅ CodeMender Security Gate passed with zero vulnerabilities."
