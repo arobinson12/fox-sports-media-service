@@ -86,6 +86,7 @@ jobs:
               --fail-on="CRITICAL,HIGH" \
               --format="sarif" \
               --output="findings.sarif" \
+              --unrestricted \
               -y
           else
             echo "🔎 Running Full Repository Security Scan on branch: ${{ github.ref_name }}..."
@@ -94,6 +95,7 @@ jobs:
               --fail-on="CRITICAL,HIGH" \
               --format="sarif" \
               --output="findings.sarif" \
+              --unrestricted \
               -y
           fi
         continue-on-error: true
@@ -123,20 +125,27 @@ jobs:
           fi
 
       - name: Upload SARIF to GitHub Security Tab
-        if: always() && hashFiles('findings.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        run: |
+          if [ -f "findings.sarif" ]; then
+            echo "Uploading findings.sarif to GitHub Security tab..."
+          fi
+        # Using github/codeql-action/upload-sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
         with:
           sarif_file: findings.sarif
           category: codemender
         continue-on-error: true
 
       - name: Upload Security Artifacts
-        if: always() && hashFiles('findings.sarif') != ''
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: codemender-findings-sarif
           path: findings.sarif
           retention-days: 90
+        continue-on-error: true
 
       - name: Enforce Security Gate Status Check
         if: steps.cm-scan.outcome != 'success'
