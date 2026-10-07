@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "CodeMender: Scan Current File",
+      "type": "shell",
+      "command": "export PATH=\"$HOME/.local/bin:$PATH\" && cm find ${file} --model gemini-3.8-flash --format sarif --output ${workspaceFolder}/.sarif/findings.sarif -y",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared",
+        "clear": true
+      },
+      "group": {
+        "kind": "test",
+        "isDefault": false
+      }
+    },
+    {
+      "label": "CodeMender: Scan Entire Workspace",
+      "type": "shell",
+      "command": "export PATH=\"$HOME/.local/bin:$PATH\" && cm find ${workspaceFolder} --model gemini-3.8-flash --format sarif --output ${workspaceFolder}/.sarif/findings.sarif -y",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "group": {
+        "kind": "test",
+        "isDefault": false
+      }
+    }
+  ]
+}

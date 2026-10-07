@@ -1,0 +1,56 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "CodeMender",
+          "version": "dev"
+        }
+      },
+      "results": [
+        {
+          "ruleId": "CWE-78",
+          "level": "error",
+          "message": {
+            "text": "OS Command Injection in export_game_clip: In `fox_sports_highlights.py`, `export_game_clip` constructs a shell command string using Python f-string interpolation with function arguments `stream_source`, `start_time`, `duration`, and `output_name`, and executes it using `os.system()`.\n\n- Source: Untrusted inputs passed via `stream_source`, `start_time`, `duration`, or `output_name`.\n- Sanitization/Validation: None. The values are directly concatenated into the command string without any shell quoting or sanitization.\n- Sink: `os.system(ffmpeg_cmd)` which executes the command string in a subshell (`/bin/sh -c`).\n\nConceptual Exploit Payload:\nSetting `output_name` to `\"; touch /tmp/pwned #\"` results in `ffmpeg_cmd` executing:\n`ffmpeg -y -ss 00:00:00 -i rtmp://live/stream -t 10 -c copy /tmp/highlights/; touch /tmp/pwned #.mp4`\nThis executes arbitrary system commands with the privileges of the running application."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "fox_sports_highlights.py"
+                },
+                "region": {
+                  "startLine": 27,
+                  "endLine": 36
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CWE-89",
+          "level": "error",
+          "message": {
+            "text": "SQL Injection in get_highlights_by_player: In `fox_sports_highlights.py`, `get_highlights_by_player` queries SQLite metadata by directly embedding the parameters `game_id` and `player_name` into an SQL query string via Python f-string formatting.\n\n- Source: Untrusted inputs supplied to `game_id` and `player_name`.\n- Sanitization/Validation: None. The inputs are directly embedded inside single quotes in the SQL query string without escaping or parameterized queries (`?`).\n- Sink: `cursor.execute(query)` which executes raw SQL against the SQLite database.\n\nConceptual Exploit Payload:\nPassing `player_name = \"' OR '1'='1' --\"` or `player_name = \"' UNION SELECT id, play_type, clip_path FROM game_highlights --\"` breaks out of the single quotes and executes arbitrary SQLite commands or extracts unauthorized records."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "fox_sports_highlights.py"
+                },
+                "region": {
+                  "startLine": 38,
+                  "endLine": 52
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

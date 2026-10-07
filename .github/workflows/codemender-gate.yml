@@ -1,0 +1,145 @@
+name: CodeMender Security Guardrail
+
+on:
+  pull_request:
+    branches: [ "main" ]
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read          # Code checkout
+  id-token: write          # Workload Identity Federation OIDC token minting
+  security-events: write   # Upload findings to GitHub Security / Code Scanning Tab
+  actions: read            # Workflow telemetry
+
+env:
+  CM_VERSION: "stable"
+  GOOGLE_CLOUD_PROJECT: ${{ vars.GCP_QUOTA_PROJECT }}
+
+jobs:
+  security-gate:
+    name: CodeMender Vulnerability Audit & Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # Full commit history required for diff-based scanning
+
+      - name: Authenticate to Google Cloud (Keyless WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SA_EMAIL }}
+          project_id: ${{ vars.GCP_QUOTA_PROJECT }}
+
+      - name: Setup gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Cache CodeMender CLI
+        id: cache-cm
+        uses: actions/cache@v4
+        with:
+          path: /opt/codemender/bin/cm
+          key: cm-cli-${{ env.CM_VERSION }}-linux-amd64
+
+      - name: Install CodeMender CLI (On Cache Miss)
+        if: steps.cache-cm.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          echo "Downloading CodeMender CLI (${CM_VERSION}) from Artifact Registry..."
+          mkdir -p /opt/codemender/bin /tmp/cm-dl
+          gcloud artifacts generic download \
+            --project=cmoc-prod \
+            --location=us \
+            --repository=codemender-cli-production \
+            --package=cm \
+            --version="${CM_VERSION}" \
+            --name=cm-linux-amd64.zip \
+            --destination=/tmp/cm-dl/
+          unzip -q -o /tmp/cm-dl/cm-linux-amd64.zip -d /opt/codemender/bin/
+          chmod +x /opt/codemender/bin/cm
+          rm -rf /tmp/cm-dl
+
+      - name: Add CodeMender to PATH
+        run: |
+          echo "/opt/codemender/bin" >> $GITHUB_PATH
+          /opt/codemender/bin/cm --version
+
+      - name: Initialize CodeMender Workspace
+        run: |
+          cm init
+          cm init --verify || echo "::warning::cm init --verify reported a configuration note."
+
+      - name: Execute CodeMender Scan (PR Delta / Push Full)
+        id: cm-scan
+        run: |
+          set -uo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "⚡ Running PR Delta Scan against base branch: origin/${{ github.base_ref }}..."
+            # Native PR diff audit with automatic 1-hop caller closure and strict security gate
+            cm find --diff="origin/${{ github.base_ref }}" \
+              --model="gemini-3.8-flash" \
+              --fail-on="CRITICAL,HIGH" \
+              --format="sarif" \
+              --output="findings.sarif" \
+              -y
+          else
+            echo "🔎 Running Full Repository Security Scan on branch: ${{ github.ref_name }}..."
+            cm find src/ \
+              --model="gemini-3.8-flash" \
+              --fail-on="CRITICAL,HIGH" \
+              --format="sarif" \
+              --output="findings.sarif" \
+              -y
+          fi
+        continue-on-error: true
+
+      - name: Publish Step Summary to GitHub Actions
+        if: always()
+        run: |
+          echo "## 🛡️ CodeMender Security Gate Report" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger:** \`${{ github.event_name }}\` | **Target:** \`${{ github.ref_name }}\` | **Model:** \`gemini-3.8-flash\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f "findings.sarif" ]; then
+            FINDINGS_COUNT=$(jq '[.runs[].results[]] | length' findings.sarif 2>/dev/null || echo "0")
+            if [ "$FINDINGS_COUNT" -gt 0 ]; then
+              echo "### ⚠️ **$FINDINGS_COUNT Vulnerabilities Detected**" >> $GITHUB_STEP_SUMMARY
+              echo "| Severity | Rule / CWE | Location | Message |" >> $GITHUB_STEP_SUMMARY
+              echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+              jq -r '.runs[].results[] | "| " + (.level | ascii_upcase) + " | " + .ruleId + " | `" + .locations[0].physicalLocation.artifactLocation.uri + ":" + (.locations[0].physicalLocation.region.startLine | tostring) + "` | " + (.message.text | split("\n")[0] | gsub("\\|"; "/")) + " |"' findings.sarif >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "> 💡 **Developer Action:** Run \`cm fix <finding-id>\` locally in VS Code or in your CLI to automatically generate and apply verified remediation patches." >> $GITHUB_STEP_SUMMARY
+            else
+              echo "### ✅ **Zero Vulnerabilities Detected**" >> $GITHUB_STEP_SUMMARY
+              echo "All code changes meet security baseline guardrails. Clean to merge!" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "No SARIF report generated." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload SARIF to GitHub Security Tab
+        if: always() && hashFiles('findings.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: findings.sarif
+          category: codemender
+        continue-on-error: true
+
+      - name: Upload Security Artifacts
+        if: always() && hashFiles('findings.sarif') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: codemender-findings-sarif
+          path: findings.sarif
+          retention-days: 90
+
+      - name: Enforce Security Gate Status Check
+        if: steps.cm-scan.outcome != 'success'
+        run: |
+          echo "::error title=CodeMender Security Gate Failed::One or more HIGH or CRITICAL vulnerabilities were detected. Merging is blocked until remediated."
+          exit 1

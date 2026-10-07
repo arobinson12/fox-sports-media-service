@@ -1,0 +1,11 @@
+{
+  "emeraldwalk.runonsave": {
+    "autoClearConsole": true,
+    "commands": [
+      {
+        "match": "\\.(py|js|ts|jsx|tsx|cpp|c|cc|h|hpp|java|go|cs|rs|kt|rb|php|sol)$",
+        "cmd": "export PATH=\"$HOME/.local/bin:$PATH\" && cm find ${file} --model gemini-3.8-flash --format sarif --output ${workspaceFolder}/.sarif/findings.sarif -y"
+      }
+    ]
+  }
+}
