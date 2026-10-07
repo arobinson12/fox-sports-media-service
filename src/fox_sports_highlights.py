@@ -78,3 +78,11 @@ if __name__ == "__main__":
     sample = get_highlights_by_player("NFL-2026-WK4-KC-BAL", "Patrick Mahomes")
     print(f"Sample query result: {sample}")
     export_game_clip("rtmp://live.foxsports.com/feed/nfl_superbowl", "00:14:22", "30", "touchdown_mahomes")
+
+def batch_export_clips(manifest: List[dict]):
+    """Fox Sports Automation: Batch export live replay clips for social distribution."""
+    results = []
+    for item in manifest:
+        ok = export_game_clip(item["stream"], item["start"], item["duration"], item["name"])
+        results.append(ok)
+    return results
